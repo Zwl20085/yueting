@@ -120,6 +120,48 @@ class TestPlayback:
         controller.cycle_mode()
         assert controller.queue.mode is PlayMode.LOOP_ALL
 
+    def test_stream_url_cached_within_ttl(self, controller):
+        """同一曲目短时间内重复播放不重复取流。"""
+        controller.play_now([t(1), t(2)], start=0)
+        controller.next()
+        controller.prev()  # 回到 t(1)，应命中缓存
+        assert controller.source.resolved.count("https://example.com/1") == 1
+
+    def test_stream_cache_expires(self, tmp_path):
+        lib = Library(tmp_path / "db2.sqlite")
+        clock = [1000.0]
+        ctrl = PlayerController(
+            player=FakePlayer(), source=FakeSource(), library=lib,
+            clock=lambda: clock[0], stream_ttl=100,
+        )
+        ctrl.play_now([t(1)], start=0)
+        clock[0] += 200  # 缓存过期
+        ctrl.play_at(0)
+        assert ctrl.source.resolved.count("https://example.com/1") == 2
+        lib.close()
+
+    def test_prefetch_next_fills_cache(self, controller):
+        """预取下一首后，next() 无需再次取流，切歌零等待。"""
+        controller.play_now([t(1), t(2)], start=0)
+        controller.prefetch_next()
+        assert "https://example.com/2" in controller.source.resolved
+        controller.next()
+        assert controller.source.resolved.count("https://example.com/2") == 1
+
+    def test_prefetch_next_at_queue_end_is_noop(self, controller):
+        controller.play_now([t(1)], start=0)
+        controller.prefetch_next()  # 顺序模式最后一首，没有下一首
+        assert controller.source.resolved == ["https://example.com/1"]
+
+    def test_prefetch_error_is_silent(self, controller):
+        controller.play_now([t(1), t(2)], start=0)
+
+        def boom(url):
+            raise RuntimeError("网络抖动")
+
+        controller.source.resolve_stream_url = boom
+        controller.prefetch_next()  # 不应抛异常，也不应触发 on_error 弹窗
+
     def test_stream_resolve_failure_skips_gracefully(self, controller):
         def boom(url):
             raise RuntimeError("取流失败")

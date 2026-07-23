@@ -39,13 +39,22 @@ class TestEntryToTrack:
         assert track.webpage_url == ""
 
 
+class BrokenBiliApi:
+    """强制 YtdlpSource 走 yt-dlp 兜底路径。"""
+
+    def search(self, query, limit=20):
+        from yueting.sources.bilibili_api import BilibiliApiError
+
+        raise BilibiliApiError("test: api down")
+
+
 class TestSearch:
     @patch("yueting.sources.ytdlp_source.YoutubeDL")
     def test_bilibili_uses_bilisearch_prefix(self, mock_ydl_cls):
         instance = mock_ydl_cls.return_value.__enter__.return_value
         instance.extract_info.return_value = {"entries": [fake_entry()]}
 
-        src = YtdlpSource()
+        src = YtdlpSource(bili_api=BrokenBiliApi())
         results = src.search("晴天", Source.BILIBILI, limit=10)
 
         query = instance.extract_info.call_args[0][0]
@@ -53,13 +62,65 @@ class TestSearch:
         assert len(results) == 1
         assert results[0].source == Source.BILIBILI
 
+    def test_bilibili_prefers_fast_api(self):
+        """B站搜索优先走官方 API（~1s），完全不碰 yt-dlp。"""
+        from yueting.models import Track
+
+        class FakeApi:
+            def search(self, query, limit=20):
+                return [Track(id="BV1", source=Source.BILIBILI, title="晴天",
+                              webpage_url="https://www.bilibili.com/video/BV1")]
+
+        src = YtdlpSource(bili_api=FakeApi())
+        with patch("yueting.sources.ytdlp_source._ydl_class") as mock_ydl:
+            results = src.search("晴天", Source.BILIBILI)
+        assert len(results) == 1
+        mock_ydl.assert_not_called()
+
+    @patch("yueting.sources.ytdlp_source.YoutubeDL")
+    def test_bilibili_falls_back_to_ytdlp_when_api_fails(self, mock_ydl_cls):
+        from yueting.sources.bilibili_api import BilibiliApiError
+
+        class BrokenApi:
+            def search(self, query, limit=20):
+                raise BilibiliApiError("接口挂了")
+
+        instance = mock_ydl_cls.return_value.__enter__.return_value
+        instance.extract_info.return_value = {"entries": [fake_entry()]}
+        src = YtdlpSource(bili_api=BrokenApi())
+        results = src.search("晴天", Source.BILIBILI)
+        assert len(results) == 1  # yt-dlp 兜底成功
+
+    def test_search_results_are_cached(self):
+        """相同搜索词 10 分钟内直接命中缓存。"""
+        from yueting.models import Track
+
+        class CountingApi:
+            def __init__(self):
+                self.calls = 0
+
+            def search(self, query, limit=20):
+                self.calls += 1
+                return [Track(id="BV1", source=Source.BILIBILI, title="晴天",
+                              webpage_url="https://x/1")]
+
+        api = CountingApi()
+        clock = [1000.0]
+        src = YtdlpSource(bili_api=api, clock=lambda: clock[0])
+        src.search("晴天", Source.BILIBILI)
+        src.search("晴天", Source.BILIBILI)
+        assert api.calls == 1
+        clock[0] += 601  # 缓存过期
+        src.search("晴天", Source.BILIBILI)
+        assert api.calls == 2
+
     @patch("yueting.sources.ytdlp_source.YoutubeDL")
     def test_bilibili_search_sends_browser_headers_and_ignores_bad_entries(self, mock_ydl_cls):
         """B站搜索接口无浏览器 UA 会 412；含付费课程条目须跳过而非中断。"""
         instance = mock_ydl_cls.return_value.__enter__.return_value
         instance.extract_info.return_value = {"entries": [fake_entry()]}
 
-        YtdlpSource().search("晴天", Source.BILIBILI)
+        YtdlpSource(bili_api=BrokenBiliApi()).search("晴天", Source.BILIBILI)
 
         opts = mock_ydl_cls.call_args[0][0]
         assert "Mozilla" in opts["http_headers"]["User-Agent"]
@@ -94,7 +155,7 @@ class TestSearch:
         instance.extract_info.return_value = {
             "entries": [fake_entry(), None, fake_entry(id=None)]
         }
-        results = YtdlpSource().search("晴天", Source.BILIBILI)
+        results = YtdlpSource(bili_api=BrokenBiliApi()).search("晴天", Source.BILIBILI)
         assert len(results) == 1
 
     def test_blank_query_raises(self):
@@ -106,7 +167,7 @@ class TestSearch:
         instance = mock_ydl_cls.return_value.__enter__.return_value
         instance.extract_info.side_effect = RuntimeError("network down")
         with pytest.raises(SearchError, match="搜索失败"):
-            YtdlpSource().search("晴天", Source.BILIBILI)
+            YtdlpSource(bili_api=BrokenBiliApi()).search("晴天", Source.BILIBILI)
 
 
 class TestStreamUrl:

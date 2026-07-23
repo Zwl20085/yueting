@@ -3,7 +3,7 @@
 中文向终端音乐播放器（TUI）。从 **B站** 和 **YouTube** 搜歌、建歌单、听推荐，全部在终端里完成。
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
-![Tests](https://img.shields.io/badge/tests-98%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-118%20passed-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## 功能
@@ -13,9 +13,9 @@
 - 🎯 **本地推荐** — 不依赖 LLM / 云端：标题字符 bigram 相似度 + 同会话共现 + 热度加权
 - 🪟 **迷你模式** — 按 `m` 收起界面，只留一行播放条（⏮ ⏯ ⏭ + 进度）
 - 🔁 **播放模式** — 顺序 / 列表循环 / 单曲循环 / 随机
-- 🧪 **TDD 开发** — 98 个测试，核心逻辑覆盖率 94%
-
-> B站搜索需要完整解析每条结果（flat 模式拿不到标题），10 条结果约需 20–35 秒，属正常现象。
+- ⚡ **快** — B站搜索走官方 API（约 1–2 秒返回 20 条），yt-dlp 自动兜底；
+  下一首流地址后台预取，切歌接近零等待；搜索结果与流地址均有本地缓存
+- 🧪 **TDD 开发** — 118 个测试，核心逻辑覆盖率 97%
 
 ## 安装
 
@@ -54,7 +54,9 @@ uv run yueting
 src/yueting/
 ├── models.py          # 领域模型（不可变 dataclass）
 ├── controller.py      # 播放控制器：UI 只与它交互
-├── sources/           # 音乐源（yt-dlp: YouTube + Bilibili）
+├── sources/
+│   ├── bilibili_api.py# B站官方搜索 API（~1s，主路径）
+│   └── ytdlp_source.py# yt-dlp 搜索/取流（油管 + B站兜底），带缓存
 ├── player/
 │   ├── queue.py       # 播放队列：纯函数 + 不可变状态
 │   └── mpv_player.py  # mpv JSON IPC（传输层可注入，便于测试）

@@ -1,18 +1,37 @@
 """yt-dlp 音乐源：统一封装 YouTube 与 Bilibili 的搜索和取流。
 
-实测坑位：
+性能策略：
+- B站搜索优先走官方 API（~1s，见 bilibili_api.py），失败才回落到 yt-dlp
+  逐条解析（~30s，慢但稳）；
+- 搜索结果进程内缓存 10 分钟；
+- yt-dlp 延迟导入，不拖慢启动。
+
+实测坑位（yt-dlp 兜底路径）：
 - B站搜索接口没有浏览器 UA 会返回 HTTP 412；
 - B站搜索结果可能混入付费课程 (cheese) 页面，无 ignoreerrors 会中断整批；
-- B站 flat 搜索只有 id 没有标题，必须完整解析（慢一些但可用）；
+- B站 flat 搜索只有 id 没有标题，必须完整解析；
 - B站 CDN 音频流没有 Referer 会 403，请求头必须传给播放器。
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
-
-from yt_dlp import YoutubeDL
+from typing import Callable
 
 from yueting.models import Source, Track
+from yueting.sources.bilibili_api import BilibiliApi, BilibiliApiError
+
+YoutubeDL = None  # 延迟导入占位；测试通过 patch 替换
+
+
+def _ydl_class():
+    global YoutubeDL
+    if YoutubeDL is None:
+        from yt_dlp import YoutubeDL as _YoutubeDL
+
+        YoutubeDL = _YoutubeDL
+    return YoutubeDL
+
 
 _BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -50,6 +69,8 @@ _STREAM_OPTS = {
     "http_headers": {"User-Agent": _BROWSER_UA},
 }
 
+_SEARCH_CACHE_TTL_SECONDS = 600.0
+
 
 class SearchError(Exception):
     pass
@@ -79,13 +100,40 @@ def _entry_to_track(entry: dict | None, source: Source) -> Track | None:
 class YtdlpSource:
     """MusicSource 实现：搜索返回 Track 列表，播放前解析音频流。"""
 
+    def __init__(
+        self,
+        bili_api: BilibiliApi | None = None,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        self._bili_api = bili_api if bili_api is not None else BilibiliApi()
+        self._clock = clock
+        self._search_cache: dict[tuple[str, str, int], tuple[list[Track], float]] = {}
+
     def search(self, query: str, source: Source, limit: int = 10) -> list[Track]:
         query = query.strip()
         if not query:
             raise ValueError("搜索词不能为空")
+
+        cache_key = (query, source.value, limit)
+        cached = self._search_cache.get(cache_key)
+        if cached is not None and self._clock() - cached[1] < _SEARCH_CACHE_TTL_SECONDS:
+            return list(cached[0])
+
+        if source is Source.BILIBILI:
+            try:
+                results = self._bili_api.search(query, limit=limit)
+            except BilibiliApiError:
+                results = self._search_via_ytdlp(query, source, limit)
+        else:
+            results = self._search_via_ytdlp(query, source, limit)
+
+        self._search_cache[cache_key] = (list(results), self._clock())
+        return results
+
+    def _search_via_ytdlp(self, query: str, source: Source, limit: int) -> list[Track]:
         expr = f"{_SEARCH_PREFIX[source]}{limit}:{query}"
         try:
-            with YoutubeDL(_SEARCH_OPTS[source]) as ydl:
+            with _ydl_class()(_SEARCH_OPTS[source]) as ydl:
                 info = ydl.extract_info(expr, download=False)
         except Exception as exc:
             raise SearchError(f"搜索失败（{source.display}）：{exc}") from exc
@@ -95,7 +143,7 @@ class YtdlpSource:
 
     def resolve_stream_url(self, webpage_url: str) -> StreamInfo:
         try:
-            with YoutubeDL(_STREAM_OPTS) as ydl:
+            with _ydl_class()(_STREAM_OPTS) as ydl:
                 info = ydl.extract_info(webpage_url, download=False)
         except Exception as exc:
             raise SearchError(f"取流失败：{exc}") from exc

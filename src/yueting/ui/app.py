@@ -65,6 +65,7 @@ class YueTingApp(App):
         super().__init__()
         self.controller = controller
         self.controller.on_error = lambda msg: self.call_from_thread(self._notify_error, msg)
+        self.controller.on_track_change = self._handle_track_change
         self.search_source = Source.BILIBILI
         self.shown_tracks: list[Track] = []
         self.mini_mode = False
@@ -108,6 +109,7 @@ class YueTingApp(App):
     def _show_tracks(self, tracks: list[Track], context: str) -> None:
         self.shown_tracks = list(tracks)
         table = self.query_one("#results", DataTable)
+        table.loading = False
         table.clear()
         for track in tracks:
             table.add_row(track.title, track.uploader, track.duration_display, track.source.display)
@@ -143,8 +145,12 @@ class YueTingApp(App):
             return f"{minutes:02d}:{secs:02d}"
 
         mode = self.controller.queue.mode.display
+        volume = self.controller.player.volume()
+        vol_text = f" 🔊{int(volume)}" if volume is not None else ""
+        fav = "❤ " if self.controller.library.is_favorite(track.key) else ""
         bar.update(
-            f"{icon} {track.title} — {track.uploader}  {fmt(pos)}/{fmt(dur)} {gauge}  [{mode}]"
+            f"{icon} {fav}{track.title} — {track.uploader}  "
+            f"{fmt(pos)}/{fmt(dur)} {gauge}  [{mode}]{vol_text}"
         )
         # 播放结束自动切歌：位置停在结尾且播放器空闲
         if dur and pos >= dur - 0.5 and not paused:
@@ -156,21 +162,38 @@ class YueTingApp(App):
     def _advance_auto(self) -> None:
         self.controller.next(manual=False)
 
+    def _handle_track_change(self, track) -> None:
+        """播放线程回调：调度后台预取下一首，切歌零等待。"""
+        try:
+            self.call_from_thread(self._prefetch_next_worker)
+        except Exception:
+            pass
+
+    @work(thread=True, exclusive=True, group="prefetch")
+    def _prefetch_next_worker(self) -> None:
+        self.controller.prefetch_next()
+
     # -- search ---------------------------------------------------------------
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "search-input" and event.value.strip():
             self.sub_title = f"正在搜索「{event.value}」…"
+            self.query_one("#results", DataTable).loading = True
             self._do_search(event.value.strip())
 
     @work(thread=True, exclusive=True, group="search")
     def _do_search(self, query: str) -> None:
         try:
-            tracks = self.controller.source.search(query, self.search_source, limit=10)
+            tracks = self.controller.source.search(query, self.search_source, limit=20)
         except (SearchError, ValueError) as exc:
-            self.call_from_thread(self._notify_error, str(exc))
+            self.call_from_thread(self._search_failed, str(exc))
             return
         label = f"{self.search_source.display}搜索：{query}（{len(tracks)}个结果）"
         self.call_from_thread(self._show_tracks, tracks, label)
+
+    def _search_failed(self, message: str) -> None:
+        self.query_one("#results", DataTable).loading = False
+        self.sub_title = "搜索失败"
+        self._notify_error(message)
 
     # -- table & sidebar interaction ----------------------------------------
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:

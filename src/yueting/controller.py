@@ -9,13 +9,25 @@ from yueting.player import queue as q
 from yueting.player.queue import QueueState
 
 
+_STREAM_TTL_SECONDS = 1800.0  # B站/油管的流 URL 通常 1-2 小时过期，留足余量
+
+
 class PlayerController:
-    def __init__(self, player, source, library, clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self,
+        player,
+        source,
+        library,
+        clock: Callable[[], float] = time.time,
+        stream_ttl: float = _STREAM_TTL_SECONDS,
+    ) -> None:
         self.player = player
         self.source = source
         self.library = library
         self.queue: QueueState = QueueState()
         self._clock = clock
+        self._stream_ttl = stream_ttl
+        self._stream_cache: dict[str, tuple[object, float]] = {}
         self.on_error: Callable[[str], None] = lambda msg: None
         self.on_track_change: Callable[[Track | None], None] = lambda track: None
 
@@ -57,12 +69,32 @@ class PlayerController:
         self.queue = self.queue.with_mode(self.queue.mode.cycled())
 
     # -- playback ------------------------------------------------------------
+    def _resolve_cached(self, track: Track):
+        """取流并缓存；命中未过期缓存则零等待。"""
+        hit = self._stream_cache.get(track.key)
+        if hit is not None and self._clock() - hit[1] < self._stream_ttl:
+            return hit[0]
+        stream = self.source.resolve_stream_url(track.webpage_url)
+        self._stream_cache[track.key] = (stream, self._clock())
+        return stream
+
+    def prefetch_next(self) -> None:
+        """后台预取下一首的流 URL，切歌零等待。失败静默（播放时会重试）。"""
+        idx = q.next_index(self.queue, manual=False)
+        if idx is None:
+            return
+        track = self.queue.tracks[idx]
+        try:
+            self._resolve_cached(track)
+        except Exception:
+            pass
+
     def _play_current(self) -> None:
         track = self.current
         if track is None:
             return
         try:
-            stream = self.source.resolve_stream_url(track.webpage_url)
+            stream = self._resolve_cached(track)
         except Exception as exc:
             self.on_error(f"无法播放「{track.title}」：{exc}")
             return
