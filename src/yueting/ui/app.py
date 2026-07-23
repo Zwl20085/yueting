@@ -65,6 +65,7 @@ class YueTingApp(App):
         super().__init__()
         self.controller = controller
         self.controller.on_error = lambda msg: self.call_from_thread(self._notify_error, msg)
+        self.controller.on_notice = lambda msg: self.call_from_thread(self.notify, msg)
         self.controller.on_track_change = self._handle_track_change
         self.search_source = Source.BILIBILI
         self.shown_tracks: list[Track] = []

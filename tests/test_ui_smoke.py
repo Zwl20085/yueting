@@ -41,6 +41,9 @@ class FakeSource:
 
         return StreamInfo(url=f"stream://{webpage_url}")
 
+    def expand_parts(self, track):
+        return [track]
+
 
 @pytest.fixture
 def app(tmp_path):

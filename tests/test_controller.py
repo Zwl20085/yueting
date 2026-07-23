@@ -68,6 +68,9 @@ class FakeSource:
     def search(self, query, source, limit=10):
         return [t(1), t(2)]
 
+    def expand_parts(self, track):
+        return [track]
+
 
 @pytest.fixture
 def controller(tmp_path):

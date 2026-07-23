@@ -29,6 +29,7 @@ class PlayerController:
         self._stream_ttl = stream_ttl
         self._stream_cache: dict[str, tuple[object, float]] = {}
         self.on_error: Callable[[str], None] = lambda msg: None
+        self.on_notice: Callable[[str], None] = lambda msg: None
         self.on_track_change: Callable[[Track | None], None] = lambda track: None
 
     @property
@@ -89,7 +90,18 @@ class PlayerController:
         except Exception:
             pass
 
+    def _expand_current(self) -> None:
+        """当前曲目若是B站多分P合集，先展开成逐P队列。"""
+        track = self.current
+        if track is None:
+            return
+        parts = self.source.expand_parts(track)
+        if len(parts) > 1:
+            self.queue = q.replace_at(self.queue, self.queue.index, parts)
+            self.on_notice(f"「{track.title}」共 {len(parts)} 个分P，已全部加入队列")
+
     def _play_current(self) -> None:
+        self._expand_current()
         track = self.current
         if track is None:
             return

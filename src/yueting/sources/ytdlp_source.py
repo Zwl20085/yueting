@@ -108,6 +108,7 @@ class YtdlpSource:
         self._bili_api = bili_api if bili_api is not None else BilibiliApi()
         self._clock = clock
         self._search_cache: dict[tuple[str, str, int], tuple[list[Track], float]] = {}
+        self._parts_cache: dict[str, list[Track]] = {}
 
     def search(self, query: str, source: Source, limit: int = 10) -> list[Track]:
         query = query.strip()
@@ -140,6 +141,38 @@ class YtdlpSource:
         entries = (info or {}).get("entries") or []
         tracks = (_entry_to_track(e, source) for e in entries)
         return [t for t in tracks if t is not None]
+
+    def expand_parts(self, track: Track) -> list[Track]:
+        """B站多分P视频展开为每P一首；单P/非B站/已是分P则原样返回。
+
+        50P 音乐合集由此变成现成的 50 首播放队列。查询失败时静默退回
+        原曲目（届时播放 P1，与旧行为一致）。
+        """
+        if track.source is not Source.BILIBILI or "?p=" in track.webpage_url:
+            return [track]
+        cached = self._parts_cache.get(track.id)
+        if cached is not None:
+            return list(cached)
+        try:
+            pages = self._bili_api.pages(track.id)
+        except BilibiliApiError:
+            return [track]
+        if len(pages) <= 1:
+            result = [track]
+        else:
+            result = [
+                Track(
+                    id=f"{track.id}-p{page.page}",
+                    source=Source.BILIBILI,
+                    title=page.title.strip() or f"{track.title} P{page.page}",
+                    uploader=track.uploader,
+                    duration=page.duration,
+                    webpage_url=f"https://www.bilibili.com/video/{track.id}?p={page.page}",
+                )
+                for page in pages
+            ]
+        self._parts_cache[track.id] = list(result)
+        return result
 
     def resolve_stream_url(self, webpage_url: str) -> StreamInfo:
         try:

@@ -64,6 +64,20 @@ def remove_at(state: QueueState, position: int) -> QueueState:
     return replace(state, tracks=tracks, index=index)
 
 
+def replace_at(state: QueueState, position: int, tracks: list[Track]) -> QueueState:
+    """把 position 处的曲目替换为一组曲目（分P展开用）。
+
+    当前曲目在替换点之后时下标顺移；正好在替换点时停在第一个新曲目上。
+    """
+    if not (0 <= position < len(state.tracks)):
+        return state
+    new_tracks = state.tracks[:position] + tuple(tracks) + state.tracks[position + 1 :]
+    index = state.index
+    if position < index:
+        index += len(tracks) - 1
+    return replace(state, tracks=new_tracks, index=index)
+
+
 def clear(state: QueueState) -> QueueState:
     return replace(state, tracks=(), index=0)
 

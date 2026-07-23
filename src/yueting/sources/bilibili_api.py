@@ -10,6 +10,7 @@ import json
 import re
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from typing import Callable
 
 from yueting.models import Source, Track
@@ -23,6 +24,7 @@ _SEARCH_URL = (
     "https://api.bilibili.com/x/web-interface/search/type"
     "?search_type=video&keyword={keyword}"
 )
+_PAGELIST_URL = "https://api.bilibili.com/x/player/pagelist?bvid={bvid}"
 _EM_TAG = re.compile(r"</?em[^>]*>")
 _TIMEOUT_SECONDS = 10
 
@@ -32,6 +34,15 @@ Fetcher = Callable[[str, dict], tuple[bytes, dict]]
 
 class BilibiliApiError(Exception):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class VideoPage:
+    """视频的一个分P。"""
+
+    page: int
+    title: str
+    duration: float | None
 
 
 def _default_fetcher(url: str, headers: dict) -> tuple[bytes, dict]:  # pragma: no cover
@@ -103,3 +114,24 @@ class BilibiliApi:
         items = (data.get("data") or {}).get("result") or []
         tracks = (_result_to_track(item) for item in items)
         return [t for t in tracks if t is not None][:limit]
+
+    def pages(self, bvid: str) -> tuple[VideoPage, ...]:
+        """查询视频的分P列表（合集视频=现成的歌单）。"""
+        try:
+            body, _ = self._fetch(
+                _PAGELIST_URL.format(bvid=bvid),
+                {"User-Agent": _UA, "Referer": _HOMEPAGE},
+            )
+            data = json.loads(body)
+        except (OSError, ValueError) as exc:
+            raise BilibiliApiError(f"分P列表获取失败：{exc}") from exc
+        if data.get("code") != 0:
+            raise BilibiliApiError(f"分P列表获取失败：{data.get('message', data.get('code'))}")
+        return tuple(
+            VideoPage(
+                page=int(item.get("page") or 0),
+                title=str(item.get("part") or ""),
+                duration=float(item["duration"]) if item.get("duration") is not None else None,
+            )
+            for item in (data.get("data") or [])
+        )

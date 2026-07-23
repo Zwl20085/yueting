@@ -7,6 +7,7 @@ from yueting.models import Source
 from yueting.sources.bilibili_api import (
     BilibiliApi,
     BilibiliApiError,
+    VideoPage,
     _parse_duration,
     _clean_title,
     _result_to_track,
@@ -114,3 +115,49 @@ class TestSearch:
         api = BilibiliApi(fetcher=FakeFetcher(api_response([])))
         with pytest.raises(ValueError):
             api.search("  ")
+
+
+def pagelist_response(parts):
+    return json.dumps({"code": 0, "data": parts}).encode("utf-8")
+
+
+class PagelistFetcher:
+    def __init__(self, body: bytes):
+        self.body = body
+        self.calls: list[str] = []
+
+    def __call__(self, url: str, headers: dict) -> tuple[bytes, dict]:
+        self.calls.append(url)
+        return self.body, {}
+
+
+class TestPages:
+    def test_pages_returns_video_pages(self):
+        body = pagelist_response([
+            {"page": 1, "part": "001.周杰伦-晴天", "duration": 270},
+            {"page": 2, "part": "002.周杰伦-夜曲", "duration": 227},
+        ])
+        api = BilibiliApi(fetcher=PagelistFetcher(body))
+        pages = api.pages("BV1FPjy6TEiE")
+        assert pages == (
+            VideoPage(page=1, title="001.周杰伦-晴天", duration=270.0),
+            VideoPage(page=2, title="002.周杰伦-夜曲", duration=227.0),
+        )
+
+    def test_pages_requests_correct_bvid(self):
+        fetcher = PagelistFetcher(pagelist_response([]))
+        BilibiliApi(fetcher=fetcher).pages("BV1xx411c7mD")
+        assert "pagelist?bvid=BV1xx411c7mD" in fetcher.calls[0]
+
+    def test_pages_error_code_raises(self):
+        body = json.dumps({"code": -404, "message": "视频不存在"}).encode()
+        api = BilibiliApi(fetcher=PagelistFetcher(body))
+        with pytest.raises(BilibiliApiError, match="视频不存在"):
+            api.pages("BV404")
+
+    def test_pages_network_failure_raises(self):
+        def boom(url, headers):
+            raise OSError("timeout")
+
+        with pytest.raises(BilibiliApiError):
+            BilibiliApi(fetcher=boom).pages("BV1")

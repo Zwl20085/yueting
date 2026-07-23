@@ -4,6 +4,7 @@ Windows 用命名管道 (\\.\pipe\yueting-mpv)，Linux/macOS 用 unix socket。
 """
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import subprocess
@@ -50,6 +51,9 @@ class PipeTransport:  # pragma: no cover - 集成层，需真实 mpv 进程
         self._handle = self._connect(timeout=10.0)
         self._request_id = 0
         self._lock = threading.Lock()  # UI 线程与后台线程可能同时发命令
+        self._closed = False
+        # TUI 无论正常退出、崩溃还是 Ctrl+C，都不能留下孤儿 mpv 进程
+        atexit.register(self.close)
 
     def _connect(self, timeout: float):
         deadline = time.monotonic() + timeout
@@ -109,16 +113,27 @@ class PipeTransport:  # pragma: no cover - 集成层，需真实 mpv 进程
         return chunks
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            with self._lock:
+                self._handle.write(encode_request(["quit"], request_id=0))
+        except Exception:
+            pass
         try:
             self._handle.close()
         except OSError:
             pass
         if self._proc.poll() is None:
-            self._proc.terminate()
             try:
-                self._proc.wait(timeout=3)
+                self._proc.wait(timeout=2)  # 给 quit 命令一点时间优雅退出
             except subprocess.TimeoutExpired:
-                self._proc.kill()
+                self._proc.terminate()
+                try:
+                    self._proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self._proc.kill()
 
 
 class MpvPlayer:

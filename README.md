@@ -3,7 +3,7 @@
 中文向终端音乐播放器（TUI）。从 **B站** 和 **YouTube** 搜歌、建歌单、听推荐，全部在终端里完成。
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
-![Tests](https://img.shields.io/badge/tests-118%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-139%20passed-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## 功能
@@ -15,7 +15,10 @@
 - 🔁 **播放模式** — 顺序 / 列表循环 / 单曲循环 / 随机
 - ⚡ **快** — B站搜索走官方 API（约 1–2 秒返回 20 条），yt-dlp 自动兜底；
   下一首流地址后台预取，切歌接近零等待；搜索结果与流地址均有本地缓存
-- 🧪 **TDD 开发** — 118 个测试，核心逻辑覆盖率 97%
+- 📺 **B站分P支持** — 播放多分P视频（如 50 首歌的合集）时自动展开：
+  每个分P成为队列中独立一首，可单独收藏、加歌单、上/下一首切换
+- 🧹 **干净退出** — 退出（甚至崩溃）时自动结束 mpv 进程，不留孤儿进程
+- 🧪 **TDD 开发** — 139 个测试，核心逻辑覆盖率 97%
 
 ## 安装
 
