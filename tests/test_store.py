@@ -109,6 +109,27 @@ class TestHistory:
         assert counts[t(1).key] == 2
         assert counts[t(2).key] == 1
 
+    def test_usable_from_worker_thread(self, lib):
+        """UI 的播放逻辑跑在线程 worker 里，Library 必须支持跨线程调用。"""
+        import threading
+
+        errors: list[Exception] = []
+
+        def worker():
+            try:
+                lib.record_play(t(1), at=1000.0)
+                lib.play_counts()
+            except Exception as exc:  # pragma: no cover
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+        assert errors == []
+        assert lib.play_counts()[t(1).key] == 4
+
     def test_persistence_across_reopen(self, tmp_path):
         path = tmp_path / "yueting.db"
         lib1 = Library(path)

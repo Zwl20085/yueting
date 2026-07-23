@@ -165,7 +165,7 @@ class YueTingApp(App):
     @work(thread=True, exclusive=True, group="search")
     def _do_search(self, query: str) -> None:
         try:
-            tracks = self.controller.source.search(query, self.search_source, limit=15)
+            tracks = self.controller.source.search(query, self.search_source, limit=10)
         except (SearchError, ValueError) as exc:
             self.call_from_thread(self._notify_error, str(exc))
             return

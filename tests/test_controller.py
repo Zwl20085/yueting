@@ -21,12 +21,14 @@ def t(n: int) -> Track:
 class FakePlayer:
     def __init__(self):
         self.played: list[tuple[str, str]] = []
+        self.played_headers: list[dict] = []
         self.paused_toggles = 0
         self.stopped = False
         self.volume_set: float | None = None
 
-    def play(self, url, title=""):
+    def play(self, url, title="", headers=None):
         self.played.append((url, title))
+        self.played_headers.append(headers or {})
 
     def toggle_pause(self):
         self.paused_toggles += 1
@@ -57,9 +59,11 @@ class FakeSource:
     def __init__(self):
         self.resolved: list[str] = []
 
-    def resolve_stream_url(self, webpage_url: str) -> str:
+    def resolve_stream_url(self, webpage_url: str):
+        from yueting.sources.ytdlp_source import StreamInfo
+
         self.resolved.append(webpage_url)
-        return f"stream://{webpage_url}"
+        return StreamInfo(url=f"stream://{webpage_url}", headers={"Referer": "https://r/"})
 
     def search(self, query, source, limit=10):
         return [t(1), t(2)]
@@ -78,6 +82,10 @@ class TestPlayback:
         controller.play_now([t(1), t(2)], start=0)
         assert controller.player.played == [("stream://https://example.com/1", "歌曲1")]
         assert controller.current.id == "id1"
+
+    def test_play_passes_stream_headers_to_player(self, controller):
+        controller.play_now([t(1)], start=0)
+        assert controller.player.played_headers == [{"Referer": "https://r/"}]
 
     def test_play_records_history(self, controller):
         controller.play_now([t(1)], start=0)

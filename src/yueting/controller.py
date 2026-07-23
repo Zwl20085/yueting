@@ -62,11 +62,11 @@ class PlayerController:
         if track is None:
             return
         try:
-            stream_url = self.source.resolve_stream_url(track.webpage_url)
+            stream = self.source.resolve_stream_url(track.webpage_url)
         except Exception as exc:
             self.on_error(f"无法播放「{track.title}」：{exc}")
             return
-        self.player.play(stream_url, title=track.title)
+        self.player.play(stream.url, title=track.title, headers=stream.headers)
         self.library.record_play(track, at=self._clock())
         self.on_track_change(track)
 

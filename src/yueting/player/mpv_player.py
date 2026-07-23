@@ -140,7 +140,17 @@ class MpvPlayer:
             return None
         return reply.get("data")
 
-    def play(self, url: str, title: str = "") -> None:
+    def play(self, url: str, title: str = "", headers: dict[str, str] | None = None) -> None:
+        headers = dict(headers or {})
+        user_agent = headers.pop("User-Agent", None)
+        # 请求头必须在 loadfile 之前设置；不带头的曲目要清掉上一首的
+        self._command(
+            "set_property",
+            "http-header-fields",
+            [f"{k}: {v}" for k, v in headers.items()],
+        )
+        if user_agent:
+            self._command("set_property", "user-agent", user_agent)
         self._command("loadfile", url, "replace")
         if title:
             self._command("set_property", "force-media-title", title)

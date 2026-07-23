@@ -46,6 +46,27 @@ class TestCommands:
         # 播放新曲目时必须取消暂停
         assert ["set_property", "pause", False] in cmds
 
+    def test_play_with_headers_sets_them_before_loadfile(self, player, transport):
+        """B站 CDN 需要 Referer，请求头必须在 loadfile 之前生效。"""
+        player.play(
+            "https://cdn.example.com/a.m4a",
+            title="晴天",
+            headers={"Referer": "https://www.bilibili.com/", "User-Agent": "UA1"},
+        )
+        cmds = [p["command"] for p in transport.sent]
+        header_idx = cmds.index(
+            ["set_property", "http-header-fields", ["Referer: https://www.bilibili.com/"]]
+        )
+        ua_idx = cmds.index(["set_property", "user-agent", "UA1"])
+        load_idx = cmds.index(["loadfile", "https://cdn.example.com/a.m4a", "replace"])
+        assert header_idx < load_idx
+        assert ua_idx < load_idx
+
+    def test_play_without_headers_clears_previous(self, player, transport):
+        player.play("https://cdn.example.com/a.m4a")
+        cmds = [p["command"] for p in transport.sent]
+        assert ["set_property", "http-header-fields", []] in cmds
+
     def test_toggle_pause(self, player, transport):
         player.toggle_pause()
         assert ["cycle", "pause"] in [p["command"] for p in transport.sent]

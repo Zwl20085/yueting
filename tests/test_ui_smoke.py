@@ -19,7 +19,7 @@ def t(n: int) -> Track:
 
 
 class FakePlayer:
-    def play(self, url, title=""): ...
+    def play(self, url, title="", headers=None): ...
     def toggle_pause(self): ...
     def stop(self): ...
     def seek(self, s): ...
@@ -37,7 +37,9 @@ class FakeSource:
         return [t(1), t(2)]
 
     def resolve_stream_url(self, webpage_url):
-        return f"stream://{webpage_url}"
+        from yueting.sources.ytdlp_source import StreamInfo
+
+        return StreamInfo(url=f"stream://{webpage_url}")
 
 
 @pytest.fixture

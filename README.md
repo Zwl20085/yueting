@@ -3,7 +3,7 @@
 中文向终端音乐播放器（TUI）。从 **B站** 和 **YouTube** 搜歌、建歌单、听推荐，全部在终端里完成。
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
-![Tests](https://img.shields.io/badge/tests-85%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-98%20passed-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## 功能
@@ -13,7 +13,9 @@
 - 🎯 **本地推荐** — 不依赖 LLM / 云端：标题字符 bigram 相似度 + 同会话共现 + 热度加权
 - 🪟 **迷你模式** — 按 `m` 收起界面，只留一行播放条（⏮ ⏯ ⏭ + 进度）
 - 🔁 **播放模式** — 顺序 / 列表循环 / 单曲循环 / 随机
-- 🧪 **TDD 开发** — 85 个测试，核心逻辑覆盖率 94%
+- 🧪 **TDD 开发** — 98 个测试，核心逻辑覆盖率 94%
+
+> B站搜索需要完整解析每条结果（flat 模式拿不到标题），10 条结果约需 20–35 秒，属正常现象。
 
 ## 安装
 
