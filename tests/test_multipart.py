@@ -41,8 +41,8 @@ class FakeApi:
 
 
 TWO_PAGES = (
-    VideoPage(page=1, title="001.晴天", duration=270.0),
-    VideoPage(page=2, title="002.夜曲", duration=227.0),
+    VideoPage(page=1, title="001.晴天", duration=270.0, cid=111),
+    VideoPage(page=2, title="002.夜曲", duration=227.0, cid=222),
 )
 
 
@@ -63,7 +63,7 @@ class TestExpandParts:
         assert src.expand_parts(bili_track())[0].uploader == "up"
 
     def test_single_part_returns_original(self):
-        src = YtdlpSource(bili_api=FakeApi((VideoPage(page=1, title="x", duration=1.0),)))
+        src = YtdlpSource(bili_api=FakeApi((VideoPage(page=1, title="x", duration=1.0, cid=1),)))
         track = bili_track()
         assert src.expand_parts(track) == [track]
 
@@ -99,7 +99,10 @@ class TestExpandParts:
         assert api.calls == 1
 
     def test_blank_part_title_falls_back_to_numbered(self):
-        pages = (VideoPage(page=1, title="", duration=1.0), VideoPage(page=2, title=" ", duration=2.0))
+        pages = (
+            VideoPage(page=1, title="", duration=1.0, cid=1),
+            VideoPage(page=2, title=" ", duration=2.0, cid=2),
+        )
         src = YtdlpSource(bili_api=FakeApi(pages))
         parts = src.expand_parts(bili_track(title="合集"))
         assert parts[0].title == "合集 P1"

@@ -121,6 +121,10 @@ def pagelist_response(parts):
     return json.dumps({"code": 0, "data": parts}).encode("utf-8")
 
 
+def playurl_response(audios):
+    return json.dumps({"code": 0, "data": {"dash": {"audio": audios}}}).encode("utf-8")
+
+
 class PagelistFetcher:
     def __init__(self, body: bytes):
         self.body = body
@@ -131,23 +135,48 @@ class PagelistFetcher:
         return self.body, {}
 
 
+class RoutingFetcher:
+    """Routes pagelist vs playurl URLs to different canned bodies."""
+
+    def __init__(self, pagelist_body: bytes, playurl_body: bytes):
+        self.bodies = {"pagelist": pagelist_body, "playurl": playurl_body}
+        self.calls: list[str] = []
+
+    def __call__(self, url: str, headers: dict) -> tuple[bytes, dict]:
+        self.calls.append(url)
+        for marker, body in self.bodies.items():
+            if marker in url:
+                return body, {}
+        return b"<html>", {"Set-Cookie": "buvid3=x"}
+
+
+TWO_PARTS = [
+    {"page": 1, "part": "001.周杰伦-晴天", "duration": 270, "cid": 111},
+    {"page": 2, "part": "002.周杰伦-夜曲", "duration": 227, "cid": 222},
+]
+
+
 class TestPages:
     def test_pages_returns_video_pages(self):
-        body = pagelist_response([
-            {"page": 1, "part": "001.周杰伦-晴天", "duration": 270},
-            {"page": 2, "part": "002.周杰伦-夜曲", "duration": 227},
-        ])
-        api = BilibiliApi(fetcher=PagelistFetcher(body))
+        api = BilibiliApi(fetcher=PagelistFetcher(pagelist_response(TWO_PARTS)))
         pages = api.pages("BV1FPjy6TEiE")
         assert pages == (
-            VideoPage(page=1, title="001.周杰伦-晴天", duration=270.0),
-            VideoPage(page=2, title="002.周杰伦-夜曲", duration=227.0),
+            VideoPage(page=1, title="001.周杰伦-晴天", duration=270.0, cid=111),
+            VideoPage(page=2, title="002.周杰伦-夜曲", duration=227.0, cid=222),
         )
 
     def test_pages_requests_correct_bvid(self):
         fetcher = PagelistFetcher(pagelist_response([]))
         BilibiliApi(fetcher=fetcher).pages("BV1xx411c7mD")
         assert "pagelist?bvid=BV1xx411c7mD" in fetcher.calls[0]
+
+    def test_pages_cached_per_bvid(self):
+        """分P展开和取流共享同一次 pagelist 请求。"""
+        fetcher = PagelistFetcher(pagelist_response(TWO_PARTS))
+        api = BilibiliApi(fetcher=fetcher)
+        api.pages("BV1")
+        api.pages("BV1")
+        assert len(fetcher.calls) == 1
 
     def test_pages_error_code_raises(self):
         body = json.dumps({"code": -404, "message": "视频不存在"}).encode()
@@ -161,3 +190,46 @@ class TestPages:
 
         with pytest.raises(BilibiliApiError):
             BilibiliApi(fetcher=boom).pages("BV1")
+
+
+class TestAudioStream:
+    AUDIOS = [
+        {"id": 30216, "bandwidth": 65699, "baseUrl": "https://cdn/low.m4s"},
+        {"id": 30280, "bandwidth": 228455, "baseUrl": "https://cdn/high.m4s"},
+    ]
+
+    def make_api(self, audios=None):
+        return BilibiliApi(
+            fetcher=RoutingFetcher(
+                pagelist_response(TWO_PARTS),
+                playurl_response(self.AUDIOS if audios is None else audios),
+            )
+        )
+
+    def test_picks_highest_bandwidth_audio(self):
+        stream = self.make_api().audio_stream("BV1", page=1)
+        assert stream.url == "https://cdn/high.m4s"
+
+    def test_headers_include_referer(self):
+        stream = self.make_api().audio_stream("BV1", page=1)
+        assert stream.headers["Referer"] == "https://www.bilibili.com/"
+        assert "User-Agent" in stream.headers
+
+    def test_uses_cid_of_requested_page(self):
+        api = self.make_api()
+        api.audio_stream("BV1", page=2)
+        playurl_call = next(c for c in api._fetch.calls if "playurl" in c)
+        assert "cid=222" in playurl_call
+
+    def test_unknown_page_raises(self):
+        with pytest.raises(BilibiliApiError, match="分P"):
+            self.make_api().audio_stream("BV1", page=99)
+
+    def test_no_audio_raises(self):
+        with pytest.raises(BilibiliApiError, match="音频"):
+            self.make_api(audios=[]).audio_stream("BV1", page=1)
+
+    def test_snake_case_base_url_accepted(self):
+        audios = [{"id": 1, "bandwidth": 100, "base_url": "https://cdn/snake.m4s"}]
+        stream = self.make_api(audios=audios).audio_stream("BV1", page=1)
+        assert stream.url == "https://cdn/snake.m4s"

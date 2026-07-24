@@ -13,7 +13,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Callable
 
-from yueting.models import Source, Track
+from yueting.models import Source, StreamInfo, Track
 
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -25,6 +25,9 @@ _SEARCH_URL = (
     "?search_type=video&keyword={keyword}"
 )
 _PAGELIST_URL = "https://api.bilibili.com/x/player/pagelist?bvid={bvid}"
+_PLAYURL_URL = (
+    "https://api.bilibili.com/x/player/playurl?bvid={bvid}&cid={cid}&fnval=16"
+)
 _EM_TAG = re.compile(r"</?em[^>]*>")
 _TIMEOUT_SECONDS = 10
 
@@ -43,6 +46,7 @@ class VideoPage:
     page: int
     title: str
     duration: float | None
+    cid: int = 0  # B站内部分P标识，取流时必需
 
 
 def _default_fetcher(url: str, headers: dict) -> tuple[bytes, dict]:  # pragma: no cover
@@ -86,12 +90,17 @@ class BilibiliApi:
     def __init__(self, fetcher: Fetcher | None = None) -> None:
         self._fetch = fetcher or _default_fetcher
         self._cookie: str | None = None
+        self._pages_cache: dict[str, tuple[VideoPage, ...]] = {}
 
     def _ensure_cookie(self) -> str:
         if self._cookie is None:
             _, headers = self._fetch(_HOMEPAGE, {"User-Agent": _UA})
             self._cookie = headers.get("Set-Cookie", "")
         return self._cookie
+
+    def warm_up(self) -> None:
+        """提前获取 cookie，让首次搜索少一次往返。"""
+        self._ensure_cookie()
 
     def search(self, query: str, limit: int = 20) -> list[Track]:
         query = query.strip()
@@ -116,7 +125,10 @@ class BilibiliApi:
         return [t for t in tracks if t is not None][:limit]
 
     def pages(self, bvid: str) -> tuple[VideoPage, ...]:
-        """查询视频的分P列表（合集视频=现成的歌单）。"""
+        """查询视频的分P列表（合集视频=现成的歌单）。结果按 bvid 缓存。"""
+        cached = self._pages_cache.get(bvid)
+        if cached is not None:
+            return cached
         try:
             body, _ = self._fetch(
                 _PAGELIST_URL.format(bvid=bvid),
@@ -127,11 +139,37 @@ class BilibiliApi:
             raise BilibiliApiError(f"分P列表获取失败：{exc}") from exc
         if data.get("code") != 0:
             raise BilibiliApiError(f"分P列表获取失败：{data.get('message', data.get('code'))}")
-        return tuple(
+        pages = tuple(
             VideoPage(
                 page=int(item.get("page") or 0),
                 title=str(item.get("part") or ""),
                 duration=float(item["duration"]) if item.get("duration") is not None else None,
+                cid=int(item.get("cid") or 0),
             )
             for item in (data.get("data") or [])
         )
+        self._pages_cache[bvid] = pages
+        return pages
+
+    def audio_stream(self, bvid: str, page: int = 1) -> StreamInfo:
+        """playurl 接口直接取音频流（~1s），替代 yt-dlp 整页解析（~5s）。"""
+        pages = self.pages(bvid)
+        target = next((p for p in pages if p.page == page), None)
+        if target is None or not target.cid:
+            raise BilibiliApiError(f"未找到分P：{bvid} P{page}")
+        try:
+            body, _ = self._fetch(
+                _PLAYURL_URL.format(bvid=bvid, cid=target.cid),
+                {"User-Agent": _UA, "Referer": _HOMEPAGE},
+            )
+            data = json.loads(body)
+        except (OSError, ValueError) as exc:
+            raise BilibiliApiError(f"取流失败：{exc}") from exc
+        if data.get("code") != 0:
+            raise BilibiliApiError(f"取流失败：{data.get('message', data.get('code'))}")
+        audios = ((data.get("data") or {}).get("dash") or {}).get("audio") or []
+        best = max(audios, key=lambda a: a.get("bandwidth") or 0, default=None)
+        url = (best or {}).get("baseUrl") or (best or {}).get("base_url")
+        if not url:
+            raise BilibiliApiError("取流失败：无可用音频流")
+        return StreamInfo(url=url, headers={"Referer": _HOMEPAGE, "User-Agent": _UA})

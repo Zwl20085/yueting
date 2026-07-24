@@ -14,12 +14,14 @@
 """
 from __future__ import annotations
 
+import re
 import time
-from dataclasses import dataclass, field
 from typing import Callable
 
-from yueting.models import Source, Track
+from yueting.models import Source, StreamInfo, Track
 from yueting.sources.bilibili_api import BilibiliApi, BilibiliApiError
+
+__all__ = ["SearchError", "StreamInfo", "YtdlpSource"]
 
 YoutubeDL = None  # 延迟导入占位；测试通过 patch 替换
 
@@ -76,12 +78,8 @@ class SearchError(Exception):
     pass
 
 
-@dataclass(frozen=True, slots=True)
-class StreamInfo:
-    """可播放的音频流：URL + 播放器请求时必须携带的 HTTP 头。"""
-
-    url: str
-    headers: dict[str, str] = field(default_factory=dict)
+_BILI_URL = re.compile(r"bilibili\.com/video/(BV\w+)")
+_BILI_PAGE = re.compile(r"[?&]p=(\d+)")
 
 
 def _entry_to_track(entry: dict | None, source: Source) -> Track | None:
@@ -142,6 +140,13 @@ class YtdlpSource:
         tracks = (_entry_to_track(e, source) for e in entries)
         return [t for t in tracks if t is not None]
 
+    def warm_up(self) -> None:
+        """启动时后台预热：提前拿 B站 cookie，省掉首次搜索的额外往返。"""
+        try:
+            self._bili_api.warm_up()
+        except Exception:
+            pass
+
     def expand_parts(self, track: Track) -> list[Track]:
         """B站多分P视频展开为每P一首；单P/非B站/已是分P则原样返回。
 
@@ -175,6 +180,17 @@ class YtdlpSource:
         return result
 
     def resolve_stream_url(self, webpage_url: str) -> StreamInfo:
+        bili = _BILI_URL.search(webpage_url)
+        if bili:
+            page_match = _BILI_PAGE.search(webpage_url)
+            page = int(page_match.group(1)) if page_match else 1
+            try:
+                return self._bili_api.audio_stream(bili.group(1), page=page)
+            except BilibiliApiError:
+                pass  # 回落到 yt-dlp（慢但稳）
+        return self._resolve_via_ytdlp(webpage_url)
+
+    def _resolve_via_ytdlp(self, webpage_url: str) -> StreamInfo:
         try:
             with _ydl_class()(_STREAM_OPTS) as ydl:
                 info = ydl.extract_info(webpage_url, download=False)

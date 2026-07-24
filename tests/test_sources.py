@@ -42,10 +42,19 @@ class TestEntryToTrack:
 class BrokenBiliApi:
     """强制 YtdlpSource 走 yt-dlp 兜底路径。"""
 
-    def search(self, query, limit=20):
+    def _boom(self):
         from yueting.sources.bilibili_api import BilibiliApiError
 
         raise BilibiliApiError("test: api down")
+
+    def search(self, query, limit=20):
+        self._boom()
+
+    def pages(self, bvid):
+        self._boom()
+
+    def audio_stream(self, bvid, page=1):
+        self._boom()
 
 
 class TestSearch:
@@ -170,13 +179,78 @@ class TestSearch:
             YtdlpSource(bili_api=BrokenBiliApi()).search("晴天", Source.BILIBILI)
 
 
+class TestBilibiliFastResolve:
+    """B站取流优先走 playurl API（~1s），yt-dlp 只做兜底（~5s）。"""
+
+    def make_source(self, api):
+        return YtdlpSource(bili_api=api)
+
+    def test_bilibili_url_resolved_via_api(self):
+        class FastApi:
+            def __init__(self):
+                self.calls = []
+
+            def audio_stream(self, bvid, page=1):
+                self.calls.append((bvid, page))
+                return StreamInfo(url="https://cdn/a.m4s", headers={"Referer": "https://r/"})
+
+        api = FastApi()
+        src = self.make_source(api)
+        with patch("yueting.sources.ytdlp_source._ydl_class") as mock_ydl:
+            stream = src.resolve_stream_url("https://www.bilibili.com/video/BV1xx411c7mD")
+        assert stream.url == "https://cdn/a.m4s"
+        assert api.calls == [("BV1xx411c7mD", 1)]
+        mock_ydl.assert_not_called()
+
+    def test_part_url_passes_page_number(self):
+        class FastApi:
+            def __init__(self):
+                self.calls = []
+
+            def audio_stream(self, bvid, page=1):
+                self.calls.append((bvid, page))
+                return StreamInfo(url="https://cdn/a.m4s")
+
+        api = FastApi()
+        self.make_source(api).resolve_stream_url("https://www.bilibili.com/video/BV1abc?p=7")
+        assert api.calls == [("BV1abc", 7)]
+
+    @patch("yueting.sources.ytdlp_source.YoutubeDL")
+    def test_api_failure_falls_back_to_ytdlp(self, mock_ydl_cls):
+        from yueting.sources.bilibili_api import BilibiliApiError
+
+        class BoomApi:
+            def audio_stream(self, bvid, page=1):
+                raise BilibiliApiError("接口异常")
+
+        instance = mock_ydl_cls.return_value.__enter__.return_value
+        instance.extract_info.return_value = {"url": "https://cdn/fallback.m4a"}
+        stream = self.make_source(BoomApi()).resolve_stream_url(
+            "https://www.bilibili.com/video/BV1xx411c7mD"
+        )
+        assert stream.url == "https://cdn/fallback.m4a"
+
+    @patch("yueting.sources.ytdlp_source.YoutubeDL")
+    def test_non_bilibili_url_uses_ytdlp(self, mock_ydl_cls):
+        class NeverApi:
+            def audio_stream(self, bvid, page=1):  # pragma: no cover
+                raise AssertionError("油管取流不应走B站API")
+
+        instance = mock_ydl_cls.return_value.__enter__.return_value
+        instance.extract_info.return_value = {"url": "https://cdn/yt.m4a"}
+        stream = self.make_source(NeverApi()).resolve_stream_url(
+            "https://www.youtube.com/watch?v=abc"
+        )
+        assert stream.url == "https://cdn/yt.m4a"
+
+
 class TestStreamUrl:
     @patch("yueting.sources.ytdlp_source.YoutubeDL")
     def test_resolve_stream_url_prefers_audio(self, mock_ydl_cls):
         instance = mock_ydl_cls.return_value.__enter__.return_value
         instance.extract_info.return_value = {"url": "https://cdn.example.com/audio.m4a"}
 
-        src = YtdlpSource()
+        src = YtdlpSource(bili_api=BrokenBiliApi())
         stream = src.resolve_stream_url("https://www.bilibili.com/video/BV1xx411c7mD")
         assert stream.url == "https://cdn.example.com/audio.m4a"
 
@@ -188,7 +262,9 @@ class TestStreamUrl:
             "url": "https://cdn.example.com/audio.m4a",
             "http_headers": {"Referer": "https://www.bilibili.com/", "User-Agent": "UA"},
         }
-        stream = YtdlpSource().resolve_stream_url("https://www.bilibili.com/video/BV1xx411c7mD")
+        stream = YtdlpSource(bili_api=BrokenBiliApi()).resolve_stream_url(
+            "https://www.bilibili.com/video/BV1xx411c7mD"
+        )
         assert isinstance(stream, StreamInfo)
         assert stream.headers["Referer"] == "https://www.bilibili.com/"
 

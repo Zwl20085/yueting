@@ -84,9 +84,13 @@ class PlayerController:
         idx = q.next_index(self.queue, manual=False)
         if idx is None:
             return
-        track = self.queue.tracks[idx]
+        self.prefetch_track(self.queue.tracks[idx])
+
+    def prefetch_track(self, track: Track) -> None:
+        """预取任意曲目（如光标悬停的搜索结果）：展开分P并解析首曲。失败静默。"""
         try:
-            self._resolve_cached(track)
+            parts = self.source.expand_parts(track)
+            self._resolve_cached(parts[0])
         except Exception:
             pass
 

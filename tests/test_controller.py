@@ -156,6 +156,20 @@ class TestPlayback:
         controller.prefetch_next()  # 顺序模式最后一首，没有下一首
         assert controller.source.resolved == ["https://example.com/1"]
 
+    def test_prefetch_track_fills_cache_and_expands(self, controller):
+        """悬停预取：展开分P并解析首曲，回车播放零等待。"""
+        controller.prefetch_track(t(3))
+        assert "https://example.com/3" in controller.source.resolved
+        controller.play_now([t(3)], start=0)
+        assert controller.source.resolved.count("https://example.com/3") == 1
+
+    def test_prefetch_track_error_is_silent(self, controller):
+        def boom(url):
+            raise RuntimeError("网络抖动")
+
+        controller.source.resolve_stream_url = boom
+        controller.prefetch_track(t(1))  # 不抛异常
+
     def test_prefetch_error_is_silent(self, controller):
         controller.play_now([t(1), t(2)], start=0)
 

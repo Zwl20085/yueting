@@ -3,7 +3,7 @@
 中文向终端音乐播放器（TUI）。从 **B站** 和 **YouTube** 搜歌、建歌单、听推荐，全部在终端里完成。
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
-![Tests](https://img.shields.io/badge/tests-139%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-152%20passed-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## 功能
@@ -13,12 +13,13 @@
 - 🎯 **本地推荐** — 不依赖 LLM / 云端：标题字符 bigram 相似度 + 同会话共现 + 热度加权
 - 🪟 **迷你模式** — 按 `m` 收起界面，只留一行播放条（⏮ ⏯ ⏭ + 进度）
 - 🔁 **播放模式** — 顺序 / 列表循环 / 单曲循环 / 随机
-- ⚡ **快** — B站搜索走官方 API（约 1–2 秒返回 20 条），yt-dlp 自动兜底；
-  下一首流地址后台预取，切歌接近零等待；搜索结果与流地址均有本地缓存
+- ⚡ **快** — B站搜索与取流全部走官方 API（搜索 ~1s、按下回车到出声 ~0.6s），
+  yt-dlp 自动兜底；光标悬停即预取音频流，下一首后台预取，切歌接近零等待；
+  搜索结果、分P列表与流地址均有本地缓存，启动时后台预热 cookie
 - 📺 **B站分P支持** — 播放多分P视频（如 50 首歌的合集）时自动展开：
   每个分P成为队列中独立一首，可单独收藏、加歌单、上/下一首切换
 - 🧹 **干净退出** — 退出（甚至崩溃）时自动结束 mpv 进程，不留孤儿进程
-- 🧪 **TDD 开发** — 139 个测试，核心逻辑覆盖率 97%
+- 🧪 **TDD 开发** — 152 个测试，核心逻辑覆盖率 96%
 
 ## 安装
 
@@ -58,7 +59,7 @@ src/yueting/
 ├── models.py          # 领域模型（不可变 dataclass）
 ├── controller.py      # 播放控制器：UI 只与它交互
 ├── sources/
-│   ├── bilibili_api.py# B站官方搜索 API（~1s，主路径）
+│   ├── bilibili_api.py# B站官方 API：搜索/分P列表/playurl 取流（主路径）
 │   └── ytdlp_source.py# yt-dlp 搜索/取流（油管 + B站兜底），带缓存
 ├── player/
 │   ├── queue.py       # 播放队列：纯函数 + 不可变状态

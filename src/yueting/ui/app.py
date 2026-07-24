@@ -90,6 +90,14 @@ class YueTingApp(App):
         self._refresh_sidebar()
         self.set_interval(1.0, self._tick)
         self.query_one("#search-input", Input).focus()
+        self._warm_up_worker()
+
+    @work(thread=True, group="warmup")
+    def _warm_up_worker(self) -> None:
+        """后台预热 B站 cookie，首次搜索更快。"""
+        warm = getattr(self.controller.source, "warm_up", None)
+        if warm is not None:
+            warm()
 
     # -- helpers --------------------------------------------------------------
     def _notify_error(self, message: str) -> None:
@@ -200,6 +208,23 @@ class YueTingApp(App):
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         if self.shown_tracks:
             self._play_from(event.cursor_row)
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """光标停在某行 0.5 秒后预取其音频流，回车播放接近零等待。"""
+        row = event.cursor_row
+        if not self.shown_tracks or row is None:
+            return
+
+        def maybe_prefetch() -> None:
+            table = self.query_one("#results", DataTable)
+            if table.cursor_row == row and 0 <= row < len(self.shown_tracks):
+                self._hover_prefetch_worker(self.shown_tracks[row])
+
+        self.set_timer(0.5, maybe_prefetch)
+
+    @work(thread=True, exclusive=True, group="hover-prefetch")
+    def _hover_prefetch_worker(self, track: Track) -> None:
+        self.controller.prefetch_track(track)
 
     @work(thread=True, exclusive=True, group="playback")
     def _play_from(self, index: int) -> None:

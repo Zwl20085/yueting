@@ -47,6 +47,14 @@ class Track:
 
 
 @dataclass(frozen=True, slots=True)
+class StreamInfo:
+    """可播放的音频流：URL + 播放器请求时必须携带的 HTTP 头。"""
+
+    url: str
+    headers: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class Playlist:
     id: int
     name: str
